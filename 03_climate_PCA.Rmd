@@ -1,0 +1,88 @@
+---
+title: "Climate PCA"
+author: "Kelly Carscadden"
+date: '2020-09-20'
+output:
+  html_document: default
+  word_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(GGally)
+library(ggfortify) #allows ggplot's autoplot to take prcomp objects
+library(kableExtra) #for tables
+library(knitr) #has kable
+theme_set(theme_classic())
+```
+
+Aim: use PCA to create multivariate climate axes for predicting flowering phenology. 
+
+```{r, echo=F, include = F}
+#read in climate data
+clim <- read_csv("climAnnPrism.csv")
+str(clim)
+names(clim)
+
+#PCA with input variables: mjj ppt, mjj temp, snowfall, meltJulian
+
+clim.pca <- prcomp(clim[,c(2,3, 6,10)], center = TRUE,
+                   scale = TRUE) 
+
+#see %Var explained by each PC Axis
+pca_var <- summary(clim.pca)
+```
+
+PC1 explains 68.7% of variation
+PC2 explains 18.8% of variation
+
+Together, these first 2 PC axes explain >87% of var (good), so I focus on only those.
+
+```{r pca_output, echo=F, warning=F, include = F}
+#plot PCA
+pdf("SI_pca_clim_1975-2019.pdf",
+    height = 4,
+    width = 4)
+
+autoplot(clim.pca, data = clim,
+         loadings = TRUE, loadings.colour = 'black',
+         loadings.label = TRUE, loadings.label.size = 3)+
+  geom_hline(yintercept = 0, lty = 2, col = "darkgrey")+
+  geom_vline(xintercept = 0, lty = 2, col = "darkgrey")
+
+dev.off()
+#the data are well spread out
+```
+
+Look at loadings of climate variables on PC axes
+
+```{r, echo=F, include = F}
+#look at loadings
+clim.pca$rotation 
+
+#ensure directions of loadings are consistent between runs of the script (i.e., keep high PC1 = high temperature)
+if(clim.pca$rotation[2,1]<0){ #if temp loads negatively on PC1, flip
+  clim$pc1_prism <- -1*clim.pca$x[,1]
+  clim$pc2_prism <- -1*clim.pca$x[,2]
+} else {
+      clim$pc1_prism <- clim.pca$x[,1]
+      clim$pc2_prism <- clim.pca$x[,2]
+      }
+
+#create kable output of loadings
+rownames(clim.pca$rotation) <- c("Precipitation", "Temperature", "Snowfall",
+                                 "Snowmelt")
+k_loading <- knitr::kable(clim.pca$rotation, booktabs = T, linesep = "",
+             align = "l", digits = 2) %>%
+  row_spec(0, bold=T) %>% 
+  kable_classic(full_width =F)
+  
+```
+
+<br>
+
+```{r, echo=F}
+#print the output table with loadings
+k_loading
+```
