@@ -1,0 +1,42 @@
+---
+title: "Converting melt date to Julian day"
+author: "Kelly Carscadden"
+date: '2020-11-13'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+```
+
+A RMBL weather station maintained by billy barr records the date of snowmelt. Here, I'm transforming it into a Julian date for subsequent analyses
+
+```{r munging, include=F, warning=F}
+#read in climate data from RMBL weather station
+clim <- read_csv("RMBLsnowfall_barr_1975_2019.csv")
+clim <- as.data.frame(clim) #so can join w/ dat3
+#relabel yr for consistency & change format, for merging
+clim <- clim %>% mutate(year = as.character(yr))
+
+#change meltOffDate into Julian DOY
+result <- NULL 
+for(i in clim$year){
+  sub <- clim[clim$year == i,"meltOffDate"]
+  meltdate <- paste(sub,i, sep="-") #adds in the yr
+  
+  #?strptime for the correct abbrev format
+  meltDate <- as.Date(meltdate, format="%d-%b-%Y") #makes date class object
+  
+  meltJulian <- julian(meltDate, origin = as.Date(paste0(i, "-01-01"))) #set origin to Jan 1 of that year, to calc days after Jan 1 (each yr) that snow melted off
+  
+  df <- data.frame("year" = i, "meltJulian" = meltJulian)
+  
+  result <- rbind(result, df)
+}
+
+clim <- inner_join(clim, result, by="year")
+
+#export data
+#write.csv(clim, "billy_annual_meltJulian_clim_1975-2019", row.names = F)
+```

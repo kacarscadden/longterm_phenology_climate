@@ -1,0 +1,149 @@
+---
+title: "SNOTEL clim aggregation and comparison with PRISM"
+author: "Kelly Carscadden"
+date: '2020-10-21'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(data.table)
+library(naniar) #NA replacement
+library(patchwork) #panel figures
+theme_set(theme_classic())
+```
+
+Aims: Validate my use of PRISM data to predict flowering phenology at RMBL by:
+1. Aggregating SNOTEL climate data that surrounds the study site
+2. Comparing SNOTEL estimates to PRISM estimates (which are coarser in scale but have more years of data available)
+
+
+Using: SNOTEL climate data from two sites that bracket RMBL (Mt Crested Butte, Schofield Pass), from 1986-2019
+
+SNOTEL provides daily data for each year -> aggregate across sites and dates to get avg May-Jul ('mjj') temperature. Note, I also explored precipitation, but it was not recorded in the same way as PRISM, so wasn't comparable in the end.
+
+
+```{r}
+#read may, june, jul daily data from 2 SNOTEL stations
+snotel <- 
+    list.files(pattern = "*.csv") %>% 
+    map_df(~fread(.)) #this cuts the 1st 4 rows (blank & metadata), and made the headers the headers
+
+#remove unnecessary variables
+snotel <- snotel %>% select(-c(Time, V10, `SNWD.I-1 (in)`, V11))
+
+#fix colnames
+colnames(snotel) <- c("site", "date", "wteq_i_in", "ppt_i_in",
+          "tobs_i_C", "tmax_d_C", "tmin_d_C", "tavg_d_C")
+
+#change missing data value from -99.9 to NA, before averaging
+snotel <- snotel %>% 
+  replace_with_na_all(condition = ~.x == -99.9) #slow step here
+
+#spot check
+summary(snotel$tmax_d_C) #lots of NAs, but now min/max seem plausible
+str(snotel)
+
+#split yyyy/mm/dd and convert inches -> cm for consistency with PRISM
+snotel <- snotel %>% 
+  separate(date, into=c("year", "mm", "dd"), sep = "-") %>%
+  mutate(wteq_i_cm = wteq_i_in*2.54,
+         ppt_i_cm = ppt_i_in*2.54,
+         mm = as.numeric(mm),
+         year = as.numeric(year)) #temps are already C
+#make month, year numeric so easier to subset
+
+#looking at raw data to check for outliers
+months <- c(5:7) #focusing on May-Jul
+
+snotel %>% filter(mm %in% months) %>%
+  ggplot(aes(x = year, y = ppt_i_cm))+
+  geom_point(aes(col = as.factor(mm))) #ok no big outliers. No missing values
+
+snotel %>% filter(mm %in% months) %>%
+  ggplot(aes(x = year, y = tavg_d_C))+
+  geom_point(aes(col = as.factor(mm))) #removed 194 rows
+#have two low values below -50, in Jun, Jul -> suspect incorrect since they're WAY below anything else seen (lowest is ~ -25 avg otherwise)
+
+#removing low temp outliers (not month specific here since I only care about specific ones I've plotted)
+snotel$tavg_d_C[which(snotel$tavg_d_C < -50)] <- NA
+
+#group by year then month -> will aggregate across days and sites
+sno_avg <- snotel %>% 
+  select(-c(dd, site)) %>%
+  group_by(year, mm) %>%
+  summarize(across(.cols = everything(),
+                   ~mean(.x, na.rm = TRUE),
+                   .names = "avg_{.col}"))
+
+#create mjj slices for each year
+sno_mjj <- sno_avg %>% 
+  #mjj only
+  filter(mm >4 & mm < 8) %>%
+  select(-mm) %>%
+  group_by(year) %>%
+  summarise(across(.cols = everything(),
+                   ~mean(.x, na.rm = TRUE),
+                   .names = "{.col}_mjj"))
+```
+
+Compare to PRISM climate data
+```{r}
+climAnnPrism <- read_csv("climAnnPrism.csv")
+
+#compare date ranges
+names(climAnnPrism)
+summary(climAnnPrism$year)
+
+#SNOTEL is more limited - 1986-2019 (ie lack older data)
+#so, if it's fairly similar to PRISM, would be MORE IDEAL TO USE PRISM
+
+#subsetting SNOTEL to just the key temperature variable & relabelling for clarity
+sno_mjj <- sno_mjj %>% 
+  select(year, "avg_mjj_tmean_C_snotel" = avg_tavg_d_C_mjj)
+
+#joining SNOTEL & PRISM datasets
+climAnnCompar <- sno_mjj %>%
+  dplyr::inner_join(climAnnPrism, by = "year")
+
+#compare temp estimates between climate sources
+cor.test(climAnnCompar$avg_mjj_tmean_C_snotel, 
+    climAnnCompar$avg_mjj_tmean_C) #0.97 correl - highly correlated
+
+#plot correlation
+(corr_plot <- climAnnCompar %>% ggplot(aes(x = avg_mjj_tmean_C, y = avg_mjj_tmean_C_snotel))+
+  geom_point(col ="grey66")+
+  geom_smooth(method = "lm", col = "black")+
+  labs(x = "PRISM mean temperature (C)",
+       y = "SNOTEL mean temperature (C)"))
+
+
+#plot line graph of temp over time for both sources, to better see if they show similar trends
+
+#melt data so easier to make a legend
+(clim_raw_compar_plot <- climAnnCompar %>% 
+  select(year, avg_mjj_tmean_C_snotel, avg_mjj_tmean_C) %>%
+  pivot_longer(cols = c(avg_mjj_tmean_C_snotel, avg_mjj_tmean_C),
+               names_to = "Source", values_to = "avg_mjj_tmean") %>% 
+  ggplot(aes(x = year, y = avg_mjj_tmean, col = Source)) +
+  geom_point()+
+  geom_line()+
+  labs(y = "Mean temperature\n(C, May - Jul)",
+       x = "Year")+
+  scale_color_manual(labels = c("PRISM", "SNOTEL"), 
+                     values = c("black", "gray66")))
+```
+
+The temperature estimates from the two data sources are very highly correlated and show similar trends through time. SNOTEL temperature is consistently slightly lower than PRISM, except for one year ~ 2003.
+  
+Create a panel figure showing these two comparisons
+```{r}
+#export patchwork plot
+pdf("prism snotel temp comparison - patchwork.pdf",
+    width = 8, height = 4)
+
+clim_raw_compar_plot + corr_plot
+
+dev.off()
+```

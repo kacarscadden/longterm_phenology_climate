@@ -1,0 +1,142 @@
+---
+title: "Annual PRISM climate data phenology"
+author: "Kelly Carscadden"
+date: '2020-10-05'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(GGally)
+```
+
+
+Aim: Organize May-Jul estimates of precipitation and temperature for RMBL area
+
+1. compare interpolated data (grid cells averaged to estimate RMBL-specific climate) to non-interpolated to see if the choice influences climate estimates substantially. The result is it shouldn't matter (both estimates very similar), so using interpolated since should be more accurate for RMBL. Code for non-interpolated is left for comparison but commented out since it's optional for the next step
+
+```{r, eval = F, include = F}
+# #read in PRISM data (non-interpolated)
+# may <- read_csv("PRISMdata/PRISM_ppt_tmean_stable_4km_MAY_197305_201905_38.9563_-106.9859.csv")
+# #View(may)
+# jun <- read_csv("PRISMdata/PRISM_ppt_tmean_stable_4km_JUNE_197306_201906_38.9563_-106.9859.csv")
+# jul <- read_csv("PRISMdata/PRISM_ppt_tmean_stable_4km_JULY_197307_201907_38.9563_-106.9859.csv")
+# 
+# #sep date into yr/mon so is easier to join & create long data
+# may <- may %>% separate(Date, into = c("Mon", "YY"), sep = "-", remove=F)
+# jun <- jun %>% separate(Date, into = c("Mon", "YY"), sep = "-", remove=F)
+# jul <- jul %>% separate(Date, into = c("Mon", "YY"), sep = "-", remove=F)
+# 
+# tmp <- may %>% dplyr::full_join(jun)
+# summer <- tmp %>% dplyr::full_join(jul)
+# rm(tmp)
+# 
+# #making 2-digit years into more readable, orderable 4-digit
+# #73-99 "19" (27 yrs)
+# #00-19 "20" (20 yrs)
+# prefix <- c(rep(19,27), rep(20,20))
+# summer$prefix_stacked <- rep(prefix,3) #since this repeats for each month
+# 
+# #create 4-digit 'year'
+# summer <- summer %>% 
+#   unite(col = "year", c(prefix_stacked, YY), sep="",
+#                  remove=T)
+# 
+# #create annual MJJ avg temp, precip
+# prism_means <- summer %>% group_by(year) %>%
+#   summarize(avg_mjj_ppt_mm = mean(ppt_mm),
+#             avg_mjj_tmean_C = mean(tmean_C))
+```
+
+```{r, echo=F, warning = F}
+#do the same for interpolated PRISM data, and compare the two to see if interpolation makes a noticeable difference
+
+#read in data
+may_int <- read_csv("PRISMdata/PRISM_ppt_tmean_stable_4km_MAY_197305_201905_38.9563_-106.9859_INTERPOLATED.csv")
+jun_int <- read_csv("PRISMdata/PRISM_ppt_tmean_stable_4km_JUNE_197306_201906_38.9563_-106.9859_INTERPOLATED.csv")
+jul_int <- read_csv("PRISMdata/PRISM_ppt_tmean_stable_4km_JULY_197307_201907_38.9563_-106.9859_INTERPOLATED.csv")
+
+#sep date into yr/mon so is easier to join & create long data
+may_int <- may_int %>% separate(Date, into = c("Mon", "YY"), sep = "-", remove=F)
+jun_int <- jun_int %>% separate(Date, into = c("Mon", "YY"), sep = "-", remove=F)
+jul_int <- jul_int %>% separate(Date, into = c("Mon", "YY"), sep = "-", remove=F)
+#one value/month/year
+
+
+tmp <- may_int %>% dplyr::full_join(jun_int)
+summer_int <- tmp %>% dplyr::full_join(jul_int)
+rm(tmp)
+
+#making 2-digit years into more readable, orderable 4-digit
+prefix <- c(rep(19,27), rep(20,20))
+summer_int$prefix_stacked <- rep(prefix,3)
+summer_int <- summer_int %>% 
+  unite(col = "year", c(prefix_stacked, YY), sep="",
+                 remove=T)
+
+#create annual MJJ avg temp, precip
+prism_means_int <- summer_int %>% group_by(year) %>%
+  summarize(avg_mjj_ppt_mm = mean(ppt_mm),
+            avg_mjj_tmean_C = mean(tmean_C))
+
+```
+
+```{r, include = F, eval = F}
+# #compare non-interpolated vs interpolated estimates
+# ggplot(aes(x = year, y = avg_mjj_ppt_mm), data = prism_means)+
+#   geom_point()+
+#   geom_point(aes(x = year, y = avg_mjj_ppt_mm),
+#              col = "cornflowerblue", alpha = 0.5,
+#              data = prism_means_int)
+# #the interpolated (blue) value is a hair lower in some years, so for ppt the choice (interp/not) should not make a difference. Diff amon years generally >> diff btwn interp/not
+# 
+# #checking for temp
+# ggplot(aes(x = year, y = avg_mjj_tmean_C), 
+#        data = prism_means)+
+#   geom_point()+
+#   geom_point(aes(x = year, y = avg_mjj_tmean_C),
+#              col = "cornflowerblue", alpha = 0.5,
+#              data = prism_means_int)
+# #interp is a hair higher in almost all years, but again both seem to show the same general pattern, so the choice shouldn't matter
+# 
+# #Using *interpolated* since a) site was not in the center of the grid cell & presumably this makes it a bit more targeted, and b) the exploratory plots above suggest that the choice of interp vs non-interpolated won't change the climate ~ year pattern really at all
+```
+
+2. Join PRISM temperature, precip with RMBL billy barr climate station estimates of snowmelt, snowfall, and spring snowpack
+```{r, include = F}
+#merge with billy barr annual snowmelt data & see how correlated
+billy <- read_csv("billy_annual_meltJulian_clim_1975-2019.csv")
+str(billy)
+str(prism_means_int)
+prism_means_int <- prism_means_int %>% mutate(year = as.numeric(year))
+
+#merge by year
+#now both are 1975-2019
+climAnnPrism <-  prism_means_int %>% 
+  dplyr::inner_join(billy, by = "year")
+str(climAnnPrism)
+
+#see how correlated the climate variables are
+ggpairs(climAnnPrism[,c(2,3,6:8,10)])
+#these 2 new PRISM clim vars are less highly correlated (with each/o and with the previous vars)
+
+#write.csv(climAnnPrism, "climAnnPrism.csv", row.names = F)
+```
+
+For my planned analyses, the two spring snowpack estimates are redundant with other climate variables. Removing them and visualizing the correlations among the remaining climate variables
+```{r, echo =F, eval = F}
+pdf("landscape climate correlation plot.pdf",
+    height = 4,
+    width = 7) #wide so x-axis values can display
+
+climAnnPrism %>% 
+  select(avg_mjj_tmean_C, avg_mjj_ppt_mm, meltJulian, snowfallTot_cm) %>%
+  #pretty up variable labels for plot
+  rename(temp = avg_mjj_tmean_C, prec = avg_mjj_ppt_mm,
+         melt = meltJulian, snow = snowfallTot_cm) %>%
+  ggpairs()+
+  theme_bw()
+
+dev.off()
+```
