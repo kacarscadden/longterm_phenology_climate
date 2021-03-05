@@ -1,0 +1,140 @@
+---
+title: "site maps"
+author: "Kelly Carscadden"
+date: '2020-11-23'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(ggmap)
+theme_set(theme_classic())
+```
+
+Making a map of the study sites that contain my focal Potentilla species, and a map of the whole state for context.
+
+```{r}
+#load metadata
+meta <- read_csv("metadata_elev_coords.csv")
+
+#load dataset with focal sites only
+dat3 <- read_csv("dat3_inouyeID.csv")
+
+#cut data to 1975-2019 to match the analyses I do elsewhere with this dataset
+dat3 <- dat3 %>% filter(year > 1974)
+
+#subset meta to just the sites in dat3 (could just join below, but don't want all the other phenol data here)
+keep <- unique(dat3$plot)
+
+meta <- meta %>% filter(plot_code %in% keep)
+head(meta)
+
+#now calc an avg lat and avg lon for each site (since not all have all 4 corners of the plot recorded)
+mean_meta <- meta %>% group_by(plot_code) %>%
+  summarize(mean_lat = mean(lat),
+            mean_lon = mean(lon),
+            mean_elev_m = mean(alt_m)
+  )
+
+#create species key to join with mean_meta
+key <- dat3 %>% select(plot, species) %>%
+  group_by(plot) %>%
+  distinct(species)
+
+mean_meta_key <- mean_meta %>% 
+  mutate(plot = as.factor(plot_code)) %>%
+  dplyr::inner_join(key, by = "plot")
+```
+
+Create map inset (zoom of study sites), with sites color coded by the species present
+```{r}
+#figure out my bounding box that I want
+box <- mean_meta_key %>% 
+      summarize(left = min(mean_lon)-0.002,
+            right = max(mean_lon)+0.002,
+            top = max(mean_lat)+0.002,
+            bottom = min(mean_lat)-0.002
+            ) #added a bit of buffer
+
+map_line <- get_stamenmap(bbox = c(left = box$left,
+                              right = box$right,
+                              top = box$top,
+                              bottom = box$bottom),
+                     zoom = 18, maptype = "toner-lines", extent = "device" )
+
+#save plot
+pdf("site map",
+    height = 5, 
+    width = 5)
+
+(map_zoom <- ggmap(map_line)+
+  geom_point(data = mean_meta_key,
+             aes(mean_lon, mean_lat, col = species, pch = species),
+             alpha = 0.5, size = 2)+
+  scale_color_manual(values = c("firebrick4", "royalblue4"))+
+  labs(pch = "Species", y = "Latitude", x = "Longitude")+
+  guides(col = "none")+ #omit legend for col, for inset
+  theme(legend.position = "bottom")
+    )
+  
+dev.off()
+```
+
+Create wider map of the area
+```{r}
+#wider map of area
+box_lg <- mean_meta_key %>% 
+  summarize(left = min(mean_lon)-0.2,
+            right = max(mean_lon)+0.2,
+            top = max(mean_lat)+0.2,
+            bottom = min(mean_lat)-0.2
+            )
+
+map_lg <- get_stamenmap(bbox = c(left = box_lg$left,
+                              right = box_lg$right,
+                              top = box_lg$top,
+                              bottom = box_lg$bottom),
+                     zoom = 14, maptype = "terrain", crop = T )
+
+pdf("site map terrain - region.pdf",
+    height = 6,
+    width = 8)
+(map_region <- ggmap(map_lg)+
+  geom_point(data = mean_meta_key,
+             aes(mean_lon, mean_lat, col = species),
+             alpha = 0.5)+
+  scale_color_manual(values = c("royalblue4", "mediumorchid4"))+
+  labs(col = "Species", y = "Latitude", x = "Longitude")
+)
+dev.off()
+```
+
+Create state-level map
+```{r}
+#state-level map
+#bounding box from: https://anthonylouisdagostino.com/bounding-boxes-for-all-us-states/
+
+map_co <- get_stamenmap(bbox = c(left = -109.060253,
+                              right = -102.041524,
+                              top = 41.003444,
+                              bottom = 36.992426),
+                     zoom = 7, maptype = "terrain", crop = T )
+#changing zoom alters size of font here
+
+#create a box to represent study area on this broader state-level map  
+box_coord <- data.frame(lon = mean(-106.9901957, -106.9846406),
+                        lat = mean(38.9638781, 38.9535112)) #averaging for a quick plot
+
+#save map
+pdf("site map terrain - colorado.pdf",
+    height = 6,
+    width = 8)
+
+(map_state <- ggmap(map_co)+
+  geom_point(aes(x = lon, y = lat), data = box_coord, pch = 15,
+             fill ="black", size = 5)+
+  labs(col = "Species", y = "Latitude", x = "Longitude"))
+
+dev.off()
+```
